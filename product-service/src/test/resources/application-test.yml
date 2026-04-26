@@ -1,0 +1,33 @@
+# Test profili — Testcontainers portlarla override edilir
+spring:
+  application:
+    name: product-service-test
+
+  jpa:
+    hibernate:
+      ddl-auto: create-drop  # Test sonunda tabloları sil
+
+  # Kafka devre dışı — entegrasyon testinde Kafka gerekmez
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.kafka.KafkaAutoConfiguration
+
+  # Consul devre dışı
+  cloud:
+    consul:
+      enabled: false
+      discovery:
+        enabled: false
+        register: false
+
+# Zipkin devre dışı
+management:
+  tracing:
+    enabled: false
+
+# Loglama seviyesini artır — test sorunlarını kolayca gör
+logging:
+  level:
+    com.ecommerce.product: DEBUG
+    org.springframework.test: INFO
+    org.testcontainers: INFO

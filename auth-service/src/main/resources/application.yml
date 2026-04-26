@@ -1,0 +1,105 @@
+# =====================================================================
+# Auth Service - Uygulama Yapılandırması
+# =====================================================================
+# Bu dosya Spring Boot'un varsayılan yapılandırma dosyasıdır.
+# Ortam değişkenleri (${VAR_NAME:default}) ile Docker/K8s'de override edilir.
+# =====================================================================
+
+spring:
+  application:
+    name: auth-service  # Consul service discovery'de bu isimle kaydolur
+
+  # ---- VERİTABANI BAĞLANTISI ----
+  datasource:
+    # jdbc:postgresql://<host>:<port>/<db_name>
+    # Docker Compose'da container adı host olarak kullanılır
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:auth_db}
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:postgres}
+    driver-class-name: org.postgresql.Driver
+
+    # HikariCP bağlantı havuzu ayarları
+    hikari:
+      maximum-pool-size: 10        # Havuzda tutulacak maksimum bağlantı sayısı
+      minimum-idle: 2              # Boşta bekleyen minimum bağlantı
+      connection-timeout: 30000    # Bağlantı almak için maksimum bekleme (ms)
+      idle-timeout: 600000         # Boşta bağlantı ne kadar tutulur (ms)
+      max-lifetime: 1800000        # Bağlantının maksimum ömrü (ms) — DB timeout'tan kısa olmalı
+
+  # ---- JPA / HIBERNATE ----
+  jpa:
+    hibernate:
+      # validate: şemayı doğrular ama değiştirmez — Flyway yönettiği için validate kullan
+      ddl-auto: validate
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true           # Loglanan SQL'i okunabilir formatta göster
+        default_schema: public     # Varsayılan PostgreSQL şeması
+    show-sql: false                # Production'da false, debug için true yapılabilir
+
+  # ---- FLYWAY VERİTABANI MİGRASYONU ----
+  flyway:
+    enabled: true
+    # Migration script'leri bu dizinde aranır (V1__, V2__ formatında)
+    locations: classpath:db/migration
+    baseline-on-migrate: true      # Mevcut DB varsa başlangıç noktası oluştur
+    validate-on-migrate: true      # Çalıştırılmış migration'ları doğrula
+
+# ---- JWT YAPIPLANDIRMASI ----
+jwt:
+  # Gizli anahtar: Base64 kodlu, en az 256 bit (32 byte)
+  # PRODUCTION'DA MUTLAKA DEĞİŞTİRİN ve environment variable kullanın!
+  secret: ${JWT_SECRET:404E635266556A586E3272357538782F413F4428472B4B6250645367566B5970}
+  # Access token: 15 dakika = 15 * 60 * 1000 ms
+  access-token-expiration: ${JWT_ACCESS_EXPIRATION:900000}
+  # Refresh token: 7 gün = 7 * 24 * 60 * 60 * 1000 ms
+  refresh-token-expiration: ${JWT_REFRESH_EXPIRATION:604800000}
+
+# ---- SUNUCU AYARLARI ----
+server:
+  port: ${SERVER_PORT:8081}  # Auth service portu — gateway bu porta yönlendirir
+  servlet:
+    context-path: /          # Kök context path — /api/v1/auth URL'i çalışır
+
+# ---- CONSUL SERVICE DISCOVERY ----
+spring.cloud.consul:
+  host: ${CONSUL_HOST:localhost}
+  port: ${CONSUL_PORT:8500}
+  discovery:
+    enabled: true
+    register: true                           # Servisi Consul'a kaydet
+    instance-id: ${spring.application.name}-${server.port}  # Benzersiz instance ID
+    health-check-path: /actuator/health      # Consul bu URL'i düzenli kontrol eder
+    health-check-interval: 15s              # 15 saniyede bir health check
+    prefer-ip-address: true                 # IP adresi ile kayıt — hostname yerine
+
+# ---- ACTUATOR (SAĞLIK VE METRİK) ----
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus  # Dışarıya açık endpoint'ler
+  endpoint:
+    health:
+      show-details: always                  # Sağlık detaylarını göster (DB durumu vb.)
+  tracing:
+    sampling:
+      probability: 1.0                      # %100 istek tracing (prod'da düşürülebilir)
+
+# ---- ZIPKIN (DISTRIBUTED TRACING) ----
+spring.zipkin:
+  base-url: ${ZIPKIN_URL:http://localhost:9411}  # Zipkin sunucusu URL'i
+  enabled: true
+
+# ---- LOGLAMA ----
+logging:
+  level:
+    com.ecommerce.auth: DEBUG          # Uygulama kodu: DEBUG seviyesi
+    org.springframework.security: INFO # Spring Security: INFO (çok detaylı çıktı üretir)
+    org.hibernate.SQL: DEBUG           # SQL sorgularını logla
+    org.hibernate.type.descriptor: TRACE  # SQL parametre değerlerini göster
+    root: INFO                         # Diğer tüm loglar: INFO seviyesi
+  pattern:
+    # %X{traceId} ve %X{spanId}: Zipkin trace ID'sini log satırına ekler
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] [traceId=%X{traceId}] %-5level %logger{36} - %msg%n"

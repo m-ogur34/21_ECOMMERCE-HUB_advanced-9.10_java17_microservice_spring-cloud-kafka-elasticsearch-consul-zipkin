@@ -1,0 +1,290 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    ECommerceHub - Root (Parent) POM
+    ===================================
+    Bu dosya tüm Maven modüllerinin ana (parent) yapılandırma dosyasıdır.
+    Multi-module Maven projesi: tek bir 'mvn install' komutuyla tüm alt modüller derlenir.
+    Ortak dependency versiyonları ve plugin ayarları burada merkezi olarak yönetilir.
+    Böylece her alt modülde versiyon tekrarı önlenir (DRY prensibi).
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+             https://maven.apache.org/xsd/maven-4.0.0.xsd">
+
+    <modelVersion>4.0.0</modelVersion>
+
+    <!-- ===== PARENT: Spring Boot BOM (Bill of Materials) ===== -->
+    <!--
+        Spring Boot'un parent POM'u kullanılır. Bu sayede:
+        - Tüm Spring bağımlılıklarının birbiriyle uyumlu versiyonları otomatik gelir
+        - Maven plugin versiyonları yönetilir
+        - Biz sadece Spring Boot versiyonunu belirtiriz, alt bağımlılıklar otomatik çözülür
+    -->
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>3.2.3</version>         <!-- Spring Boot 3.x — Java 17+ zorunlu -->
+        <relativePath/>                   <!-- Maven Central'dan indir, yerel aramaz -->
+    </parent>
+
+    <!-- ===== PROJE KİMLİĞİ ===== -->
+    <groupId>com.ecommerce</groupId>         <!-- Organizasyon/paket grubu -->
+    <artifactId>ecommerce-hub</artifactId>   <!-- Root modül artifactId -->
+    <version>1.0.0-SNAPSHOT</version>        <!-- SNAPSHOT: geliştirme sürümü -->
+    <packaging>pom</packaging>               <!-- 'pom' = bu modül sadece parent, JAR üretmez -->
+    <name>ECommerceHub - Root</name>
+    <description>Mikroservis tabanlı e-ticaret platformu - mülakat ve öğrenim projesi</description>
+
+    <!-- ===== ALT MODÜLLER ===== -->
+    <!--
+        Maven bu listedeki modülleri sırayla derler.
+        Sıra önemlidir: common-lib önce derlenmeli çünkü diğer servisler ona bağımlıdır.
+        Spring Boot uygulamaları (auth, product vb.) common-lib'e bağlı olduğundan sonra gelir.
+        frontend Maven modülü değil, npm ile derlenir — burada yoktur.
+        api-gateway en son eklendi çünkü diğer servislerin ayakta olmasını bekler.
+    -->
+    <modules>
+        <module>common-lib</module>           <!-- 1. Ortak DTO, exception, util -->
+        <module>auth-service</module>         <!-- 2. Kimlik doğrulama servisi -->
+        <module>product-service</module>      <!-- 3. Ürün yönetimi servisi -->
+        <module>order-service</module>        <!-- 4. Sipariş yönetimi servisi -->
+        <module>notification-service</module> <!-- 5. Bildirim servisi -->
+        <module>api-gateway</module>          <!-- 6. API Gateway -->
+    </modules>
+
+    <!-- ===== GLOBAL ÖZELLİKLER (PROPERTIES) ===== -->
+    <!--
+        Tüm alt modüllerin erişebildiği merkezi versiyon sabitleri.
+        Bir versiyonu değiştirmek istersen sadece burada değiştirirsin —
+        tüm modüllere otomatik yansır.
+    -->
+    <properties>
+        <!-- Java versiyonu — Spring Boot 3.x Java 17 gerektirir -->
+        <java.version>17</java.version>
+
+        <!-- Spring Cloud versiyonu — Spring Boot 3.2.x ile uyumlu -->
+        <spring-cloud.version>2023.0.0</spring-cloud.version>
+
+        <!-- JWT kütüphanesi versiyonu -->
+        <jjwt.version>0.12.3</jjwt.version>
+
+        <!-- MapStruct: derleme zamanında DTO <-> Entity dönüşüm kodu üretir -->
+        <mapstruct.version>1.5.5.Final</mapstruct.version>
+
+        <!-- Lombok: getter/setter/builder gibi boilerplate kodu otomatik üretir -->
+        <lombok.version>1.18.30</lombok.version>
+
+        <!-- Testcontainers: integration test için gerçek Docker konteyneri ayağa kaldırır -->
+        <testcontainers.version>1.19.4</testcontainers.version>
+
+        <!-- Maven compiler ayarları -->
+        <maven.compiler.source>${java.version}</maven.compiler.source>
+        <maven.compiler.target>${java.version}</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+    </properties>
+
+    <!-- ===== BAĞIMLILIK YÖNETİMİ (dependencyManagement) ===== -->
+    <!--
+        dependencyManagement: versiyonları tanımlar ama bağımlılıkları EKLEMEZ.
+        Alt modüller <version> belirtmeden bu bağımlılıkları kullanabilir.
+        Bu sayede tüm modüllerde aynı versiyon kullanılması garantilenir.
+    -->
+    <dependencyManagement>
+        <dependencies>
+
+            <!-- Spring Cloud BOM: Eureka, Gateway, Config gibi bileşenlerin uyumlu versiyonları -->
+            <dependency>
+                <groupId>org.springframework.cloud</groupId>
+                <artifactId>spring-cloud-dependencies</artifactId>
+                <version>${spring-cloud.version}</version>
+                <type>pom</type>
+                <scope>import</scope> <!-- BOM import: tüm Spring Cloud versiyonlarını çeker -->
+            </dependency>
+
+            <!-- JWT API: token oluşturma ve doğrulama için standart arayüz -->
+            <dependency>
+                <groupId>io.jsonwebtoken</groupId>
+                <artifactId>jjwt-api</artifactId>
+                <version>${jjwt.version}</version>
+            </dependency>
+
+            <!-- JWT Implementasyon: jjwt-api'nin gerçek implementasyonu, runtime'da lazım -->
+            <dependency>
+                <groupId>io.jsonwebtoken</groupId>
+                <artifactId>jjwt-impl</artifactId>
+                <version>${jjwt.version}</version>
+                <scope>runtime</scope> <!-- Derleme sırasında gerekmez, çalışma anında gerekir -->
+            </dependency>
+
+            <!-- JWT Jackson desteği: JWT payload'ı JSON olarak serialize/deserialize eder -->
+            <dependency>
+                <groupId>io.jsonwebtoken</groupId>
+                <artifactId>jjwt-jackson</artifactId>
+                <version>${jjwt.version}</version>
+                <scope>runtime</scope>
+            </dependency>
+
+            <!-- MapStruct: annotation processor — derleme zamanında mapper kodu üretir -->
+            <dependency>
+                <groupId>org.mapstruct</groupId>
+                <artifactId>mapstruct</artifactId>
+                <version>${mapstruct.version}</version>
+            </dependency>
+
+            <!-- Testcontainers BOM: farklı konteyner modüllerinin uyumlu versiyonları -->
+            <dependency>
+                <groupId>org.testcontainers</groupId>
+                <artifactId>testcontainers-bom</artifactId>
+                <version>${testcontainers.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+
+            <!-- common-lib: projemizin kendi ortak kütüphanesi -->
+            <dependency>
+                <groupId>com.ecommerce</groupId>
+                <artifactId>common-lib</artifactId>
+                <version>${project.version}</version> <!-- Root POM'dan alınan versiyon -->
+            </dependency>
+
+        </dependencies>
+    </dependencyManagement>
+
+    <!-- ===== TÜM MODÜLLERDE ORTAK BAĞIMLILIKLAR ===== -->
+    <!--
+        Bu bölümdeki bağımlılıklar tüm alt modüllere OTOMATİK eklenir.
+        Yani her modülde tekrar yazılmalarına gerek yoktur.
+        Sadece gerçekten her modülde lazım olan şeyler buraya gelmeli.
+    -->
+    <dependencies>
+
+        <!-- Lombok: her modülde kullanılan @Data, @Builder, @Slf4j gibi annotationlar -->
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <optional>true</optional> <!-- optional=true: bu bağımlılığa dayanan başka modüller otomatik almaz -->
+        </dependency>
+
+        <!-- Spring Boot Test: JUnit 5, Mockito, AssertJ içerir — her modülde test yazmak için -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope> <!-- Sadece test derleme/çalışma zamanında aktif -->
+        </dependency>
+
+    </dependencies>
+
+    <!-- ===== BUILD PLUGIN YÖNETİMİ ===== -->
+    <build>
+        <pluginManagement>
+            <plugins>
+
+                <!--
+                    Maven Compiler Plugin: Java kaynak kodunu derler.
+                    annotationProcessorPaths: Lombok ve MapStruct derleme zamanında
+                    birlikte çalışması için sıralamaları önemli — Lombok önce gelir.
+                -->
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <version>3.11.0</version>
+                    <configuration>
+                        <source>${java.version}</source>
+                        <target>${java.version}</target>
+                        <annotationProcessorPaths>
+                            <!-- Lombok önce: getter/setter üretir, MapStruct bunları kullanır -->
+                            <path>
+                                <groupId>org.projectlombok</groupId>
+                                <artifactId>lombok</artifactId>
+                                <version>${lombok.version}</version>
+                            </path>
+                            <!-- MapStruct sonra: Lombok'un ürettiği methodları kullanarak mapper üretir -->
+                            <path>
+                                <groupId>org.mapstruct</groupId>
+                                <artifactId>mapstruct-processor</artifactId>
+                                <version>${mapstruct.version}</version>
+                            </path>
+                        </annotationProcessorPaths>
+                    </configuration>
+                </plugin>
+
+                <!--
+                    Spring Boot Maven Plugin: çalıştırılabilir (executable) JAR üretir.
+                    'mvn spring-boot:run' ile servisi başlatmak için de kullanılır.
+                    excludes: Lombok runtime'da gerekmez, final JAR'dan çıkarılır.
+                -->
+                <plugin>
+                    <groupId>org.springframework.boot</groupId>
+                    <artifactId>spring-boot-maven-plugin</artifactId>
+                    <configuration>
+                        <excludes>
+                            <exclude>
+                                <groupId>org.projectlombok</groupId>
+                                <artifactId>lombok</artifactId>
+                            </exclude>
+                        </excludes>
+                    </configuration>
+                </plugin>
+
+                <!--
+                    Maven Surefire Plugin: 'mvn test' komutuyla unit testleri çalıştırır.
+                    JUnit 5 (Jupiter) için version 2.22+ gerekir.
+                -->
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <version>3.1.2</version>
+                </plugin>
+
+                <!--
+                    Maven Failsafe Plugin: integration testleri çalıştırır (*IT.java).
+                    'mvn verify' komutuyla tetiklenir, unit testlerden ayrı tutulur.
+                -->
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-failsafe-plugin</artifactId>
+                    <version>3.1.2</version>
+                    <executions>
+                        <execution>
+                            <goals>
+                                <goal>integration-test</goal>
+                                <goal>verify</goal>
+                            </goals>
+                        </execution>
+                    </executions>
+                </plugin>
+
+            </plugins>
+        </pluginManagement>
+    </build>
+
+    <!-- ===== SPRING MILESTONE REPOSITORY ===== -->
+    <!--
+        Spring'in bazı pre-release sürümleri Maven Central'da bulunmayabilir.
+        Bu repository tanımı sayesinde Spring'in kendi sunucusundan indirilir.
+    -->
+    <repositories>
+        <repository>
+            <id>spring-milestones</id>
+            <name>Spring Milestones</name>
+            <url>https://repo.spring.io/milestone</url>
+            <snapshots>
+                <enabled>false</enabled>
+            </snapshots>
+        </repository>
+    </repositories>
+
+    <pluginRepositories>
+        <pluginRepository>
+            <id>spring-milestones</id>
+            <name>Spring Milestones</name>
+            <url>https://repo.spring.io/milestone</url>
+            <snapshots>
+                <enabled>false</enabled>
+            </snapshots>
+        </pluginRepository>
+    </pluginRepositories>
+
+</project>

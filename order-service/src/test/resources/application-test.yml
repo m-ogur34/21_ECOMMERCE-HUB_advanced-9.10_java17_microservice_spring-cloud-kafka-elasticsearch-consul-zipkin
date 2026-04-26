@@ -1,0 +1,29 @@
+spring:
+  application:
+    name: order-service-test
+
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+
+  cloud:
+    consul:
+      enabled: false
+      discovery:
+        enabled: false
+        register: false
+
+management:
+  tracing:
+    enabled: false
+
+# Test profilinde JWT doğrulamayı devre dışı bırak
+# SecurityConfig'de @Profile("!test") ile gerçek filter atlanır
+app:
+  security:
+    test-mode: true
+
+logging:
+  level:
+    com.ecommerce.order: DEBUG
+    org.springframework.test: INFO

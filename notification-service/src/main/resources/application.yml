@@ -1,0 +1,67 @@
+# =====================================================================
+# Notification Service - Uygulama Yapılandırması
+# =====================================================================
+
+spring:
+  application:
+    name: notification-service
+
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:notification_db}
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:postgres}
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: validate  # Flyway tabloları oluşturur, JPA sadece doğrular
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      group-id: notification-service-group
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.trusted.packages: "com.ecommerce.common.event"
+    listener:
+      ack-mode: MANUAL
+
+  # ActiveMQ Artemis — embedded mode (test/dev)
+  artemis:
+    mode: embedded            # Embedded broker — ayrı sunucu gerekmez
+    embedded:
+      enabled: true
+      persistent: false       # Mesajlar bellekte — yeniden başlatmada silinir
+
+server:
+  port: ${SERVER_PORT:8084}
+
+spring.cloud.consul:
+  host: ${CONSUL_HOST:localhost}
+  port: ${CONSUL_PORT:8500}
+  discovery:
+    enabled: true
+    register: true
+    instance-id: ${spring.application.name}-${server.port}
+    health-check-path: /actuator/health
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+
+logging:
+  level:
+    com.ecommerce.notification: DEBUG
+    root: INFO

@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ecommerce
+  labels:
+    # Bu namespace altında tüm ECommerceHub servisleri çalışır.
+    # Kubernetes'te namespace = mantıksal izolasyon birimi.
+    # Production'da ayrı namespace'ler: ecommerce-dev, ecommerce-staging, ecommerce-prod
+    app.kubernetes.io/part-of: ecommerce-hub
+    environment: development

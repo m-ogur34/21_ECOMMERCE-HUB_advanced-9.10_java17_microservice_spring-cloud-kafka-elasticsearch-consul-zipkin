@@ -1,0 +1,163 @@
+---
+# =====================================================================
+# Auth Service - Deployment
+# JWT üretimi ve doğrulaması, kullanıcı yönetimi.
+# HPA (HorizontalPodAutoscaler) ile yük altında otomatik ölçeklenir.
+# =====================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-service
+  namespace: ecommerce
+  labels:
+    app: auth-service
+    version: v1
+    app.kubernetes.io/part-of: ecommerce-hub
+spec:
+  replicas: 2  # Yüksek erişilebilirlik için 2 pod
+  selector:
+    matchLabels:
+      app: auth-service
+  # RollingUpdate: sıfır kesintili güncelleme
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1       # Güncelleme sırasında +1 fazla pod
+      maxUnavailable: 0 # Hiçbir pod kullanılamaz hale gelmesin
+  template:
+    metadata:
+      labels:
+        app: auth-service
+        version: v1
+      annotations:
+        # Prometheus scraping annotation — Prometheus bu pod'u otomatik keşfeder
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/actuator/prometheus"
+        prometheus.io/port: "8081"
+    spec:
+      # Graceful shutdown: SIGTERM gelince Spring Boot 30s bekler
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: auth-service
+          # Production'da tag olarak latest kullanma: immutable tag kullan (v1.2.3 veya commit hash)
+          image: ecommerce/auth-service:latest
+          imagePullPolicy: IfNotPresent  # Dev ortamı — prod'da Always
+          ports:
+            - containerPort: 8081
+          # envFrom: ConfigMap'teki tüm key'leri env olarak al
+          envFrom:
+            - configMapRef:
+                name: app-config
+          env:
+            # Secret değerler envFrom ile değil, tek tek alınır (güvenlik)
+            - name: DB_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: AUTH_DB_HOST
+            - name: DB_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: AUTH_DB_PORT
+            - name: DB_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: AUTH_DB_NAME
+            - name: DB_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: DB_USERNAME
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: DB_PASSWORD
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: JWT_SECRET
+            - name: SERVER_PORT
+              value: "8081"
+          # Liveness: JVM çöktü mü? → container yeniden başlat
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8081
+            initialDelaySeconds: 60  # JVM + Spring Boot başlatma süresi
+            periodSeconds: 15
+            failureThreshold: 3
+            timeoutSeconds: 5
+          # Readiness: trafik almaya hazır mı? DB bağlantısı var mı?
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8081
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 3
+            timeoutSeconds: 5
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "200m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          # JVM başlangıç süresi için startup probe
+          startupProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8081
+            failureThreshold: 30  # 30 × 10s = 300s maksimum başlatma süresi
+            periodSeconds: 10
+---
+# ClusterIP: Cluster içinden lb://auth-service ile erişilir (Consul)
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth-service-svc
+  namespace: ecommerce
+  labels:
+    app: auth-service
+spec:
+  selector:
+    app: auth-service
+  ports:
+    - port: 8081
+      targetPort: 8081
+  type: ClusterIP
+---
+# =====================================================================
+# HorizontalPodAutoscaler - Otomatik Ölçekleme
+# CPU %70'i geçince yeni pod ekler, azalınca kaldırır.
+# metrics-server kurulu olmalı: kubectl apply -f metrics-server.yaml
+# =====================================================================
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: auth-service-hpa
+  namespace: ecommerce
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: auth-service
+  minReplicas: 2
+  maxReplicas: 5
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70  # Pod CPU %70'i geçince yeni pod ekle
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80

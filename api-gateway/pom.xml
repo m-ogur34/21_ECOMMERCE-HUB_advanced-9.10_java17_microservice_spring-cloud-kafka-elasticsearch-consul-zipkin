@@ -1,0 +1,152 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    api-gateway - Alt Modül POM
+    ==============================
+    API Gateway servisi.
+    Sorumlulukları:
+    - Tüm gelen istekleri ilgili mikroservislere yönlendirmek (routing)
+    - JWT token doğrulama (authentication filter)
+    - Redis ile rate limiting (IP başına istek sınırı)
+    - CORS politikası yönetimi
+    - Consul üzerinden load balancing
+    - İstek/cevap loglama
+
+    ÖNEMLİ: Spring Cloud Gateway, Spring WebFlux (reaktif) üzerine kuruludur.
+    Bu nedenle spring-boot-starter-web (Servlet tabanlı) KULLANILMAZ.
+    spring-boot-starter-webflux kullanılır. İkisi birlikte kullanılamaz!
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+             https://maven.apache.org/xsd/maven-4.0.0.xsd">
+
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.ecommerce</groupId>
+        <artifactId>ecommerce-hub</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>api-gateway</artifactId>
+    <packaging>jar</packaging>
+    <name>ECommerceHub - API Gateway</name>
+    <description>Spring Cloud Gateway: yönlendirme, JWT filtresi, rate limiting</description>
+
+    <dependencies>
+
+        <!-- ===== SPRING CLOUD GATEWAY ===== -->
+
+        <!--
+            Spring Cloud Gateway: reaktif (non-blocking) API Gateway.
+            Tüm istek yönlendirme mantığı burada tanımlanır.
+            Spring WebFlux üzerine kurulu olduğu için yüksek eş zamanlılık destekler.
+            İçinde spring-boot-starter-webflux zaten gömülüdür.
+        -->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-gateway</artifactId>
+        </dependency>
+
+        <!-- ===== RATE LIMITING: REDIS ===== -->
+
+        <!--
+            Spring Data Redis Reactive: Gateway'in rate limiting özelliği için.
+            RequestRateLimiter filter'ı Redis'i kullanarak token bucket algoritması uygular.
+            Her IP veya kullanıcı için istek sayısı Redis'te takip edilir.
+            'reactive' versiyonu kullanmak zorundayız çünkü Gateway WebFlux tabanlı.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis-reactive</artifactId>
+        </dependency>
+
+        <!-- ===== SERVICE DISCOVERY ===== -->
+
+        <!--
+            Consul Discovery: Gateway, diğer servisleri IP/port yerine isim ile bulur.
+            lb://auth-service, lb://product-service gibi load balanced URL'ler kullanılır.
+            'lb://' prefix'i Spring Cloud LoadBalancer'ı tetikler.
+        -->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-consul-discovery</artifactId>
+        </dependency>
+
+        <!--
+            Spring Cloud LoadBalancer: Consul'dan alınan servis instance'ları arasında
+            round-robin veya rastgele yük dengeleme yapar.
+        -->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-loadbalancer</artifactId>
+        </dependency>
+
+        <!-- ===== JWT (Token Doğrulama Filtresi İçin) ===== -->
+
+        <!--
+            Gateway gelen her istekte JWT token'ı doğrular.
+            Geçersiz token varsa isteği auth-service'e iletmeden reddeder.
+        -->
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-impl</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-jackson</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
+        <!-- ===== ACTUATOR ===== -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+
+        <!-- ===== OBSERVABILITY ===== -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-tracing-bridge-brave</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.zipkin.reporter2</groupId>
+            <artifactId>zipkin-reporter-brave</artifactId>
+        </dependency>
+
+        <!-- ===== ORTAK KÜTÜPHANE ===== -->
+        <dependency>
+            <groupId>com.ecommerce</groupId>
+            <artifactId>common-lib</artifactId>
+        </dependency>
+
+        <!-- ===== TEST ===== -->
+
+        <!--
+            WebFlux Test: reaktif uç noktaları test etmek için WebTestClient sağlar.
+            Servlet tabanlı MockMvc yerine WebFlux projelerinde bu kullanılır.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+
+</project>

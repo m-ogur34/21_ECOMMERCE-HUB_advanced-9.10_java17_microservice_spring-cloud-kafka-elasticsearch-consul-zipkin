@@ -1,0 +1,60 @@
+// Global stiller — component-scoped stiller ilgili component'te yazılır
+
+// HTML reset: tüm tarayıcılarda tutarlı başlangıç
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: Roboto, "Helvetica Neue", sans-serif;
+  background-color: #f5f5f5;
+  min-height: 100vh;
+}
+
+// Yardımcı sınıflar — Angular Material ile uyumlu
+.full-width {
+  width: 100%;
+}
+
+.spacer {
+  flex: 1 1 auto;
+}
+
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 16px;
+}
+
+.page-content {
+  padding: 24px 0;
+}
+
+// Hata mesajları için kırmızı renk
+.error-text {
+  color: #f44336;
+  font-size: 12px;
+}
+
+// Başarı mesajları için yeşil renk
+.success-text {
+  color: #4caf50;
+}
+
+// Kart gölgesi standartlaştır
+.mat-mdc-card {
+  border-radius: 8px !important;
+}
+
+// Snackbar stilleri
+.error-snackbar {
+  --mdc-snackbar-container-color: #f44336;
+  --mdc-snackbar-supporting-text-color: white;
+}
+
+.success-snackbar {
+  --mdc-snackbar-container-color: #4caf50;
+  --mdc-snackbar-supporting-text-color: white;
+}

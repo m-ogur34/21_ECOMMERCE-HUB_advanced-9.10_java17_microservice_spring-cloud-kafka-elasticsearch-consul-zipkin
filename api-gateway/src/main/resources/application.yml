@@ -1,0 +1,82 @@
+# =====================================================================
+# API Gateway - Uygulama Yapılandırması
+# =====================================================================
+# Gateway tüm isteklerin tek giriş noktasıdır.
+# İstemciler sadece gateway URL'ini bilir: http://localhost:8080
+# =====================================================================
+
+spring:
+  application:
+    name: api-gateway
+
+  # ---- REDIS (Rate Limiting İçin) ----
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+
+  # ---- SPRING CLOUD GATEWAY ----
+  cloud:
+    gateway:
+      # Actuator'da route bilgilerini göster (debug için)
+      actuator:
+        verbose:
+          enabled: true
+
+      # Global default filtreler — tüm route'lara uygulanır
+      default-filters:
+        # Yanıt header'larından hassas bilgileri kaldır
+        - RemoveResponseHeader=Server
+        - RemoveResponseHeader=X-Powered-By
+
+      # Discovery Client entegrasyonu — otomatik route oluşturma
+      # lb://service-name ile Consul'dan servisi bulur
+      discovery:
+        locator:
+          enabled: true            # Consul'daki servisler otomatik route olur
+          lower-case-service-id: true # auth-service (küçük harf)
+
+    # ---- CONSUL SERVICE DISCOVERY ----
+    consul:
+      host: ${CONSUL_HOST:localhost}
+      port: ${CONSUL_PORT:8500}
+      discovery:
+        enabled: true
+        register: true
+        instance-id: ${spring.application.name}-${server.port}
+        health-check-path: /actuator/health
+        prefer-ip-address: true
+
+# ---- JWT ----
+jwt:
+  secret: ${JWT_SECRET:404E635266556A586E3272357538782F413F4428472B4B6250645367566B5970}
+
+# ---- SUNUCU ----
+server:
+  port: ${SERVER_PORT:8080}  # Tek giriş noktası: 8080
+
+# ---- ACTUATOR ----
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,gateway
+  endpoint:
+    gateway:
+      enabled: true           # Gateway route'larını görme endpoint'i
+    health:
+      show-details: always
+  tracing:
+    sampling:
+      probability: 1.0
+
+spring.zipkin:
+  base-url: ${ZIPKIN_URL:http://localhost:9411}
+  enabled: true
+
+logging:
+  level:
+    com.ecommerce.gateway: DEBUG
+    org.springframework.cloud.gateway: DEBUG  # Route matching logları
+    reactor.netty: INFO                       # WebFlux network logları
+    root: INFO

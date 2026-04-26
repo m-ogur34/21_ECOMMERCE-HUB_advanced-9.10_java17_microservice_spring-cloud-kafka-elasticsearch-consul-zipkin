@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    common-lib - Alt Modül POM
+    ============================
+    Bu modül, tüm mikroservislerin paylaştığı ortak sınıfları içerir:
+    - DTO (Data Transfer Object) sınıfları
+    - Custom exception hiyerarşisi
+    - Sabit değerler (constants)
+    - Yardımcı (utility) sınıflar
+    - Kafka event modelleri
+
+    ÖNEMLİ: Bu modül <packaging>jar</packaging> kullanır ve Spring Boot uygulaması DEĞİLDİR.
+    Spring Boot plugin'i bu modüle uygulanmaz çünkü kendi başına çalışmaz,
+    diğer servislerin içine gömülür.
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+             https://maven.apache.org/xsd/maven-4.0.0.xsd">
+
+    <modelVersion>4.0.0</modelVersion>
+
+    <!-- Root POM'u parent olarak belirtiyoruz — versiyon yönetimini oradan alırız -->
+    <parent>
+        <groupId>com.ecommerce</groupId>
+        <artifactId>ecommerce-hub</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+        <!-- relativePath: parent pom.xml'in bu dosyaya göre konumu -->
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>common-lib</artifactId>
+    <packaging>jar</packaging> <!-- Normal JAR — Spring Boot executable JAR değil -->
+    <name>ECommerceHub - Common Library</name>
+    <description>Tüm servislerin paylaştığı ortak DTO, exception ve util sınıfları</description>
+
+    <dependencies>
+
+        <!--
+            Spring Web: DTO'larda @JsonProperty gibi Jackson annotationları için.
+            Ayrıca GlobalExceptionHandler'da ResponseEntity kullanmak için gerekir.
+            'provided' scope yerine 'compile' kullanıyoruz çünkü diğer servisler
+            bu bağımlılığı zaten kendileri ekliyor, burada eklemek zararsız.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+
+        <!--
+            Spring Validation: @NotNull, @NotBlank, @Size, @Email gibi
+            Bean Validation 3.0 annotationlarını kullanmak için.
+            DTO'larda input doğrulama kuralları bu kütüphaneyle tanımlanır.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-validation</artifactId>
+        </dependency>
+
+        <!--
+            Jackson Databind: Java nesneleri ↔ JSON dönüşümü.
+            DTO'ların serialize/deserialize edilmesi için.
+            spring-boot-starter-web içinde zaten geliyor ama explicit eklemek niyeti gösterir.
+        -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
+
+        <!-- Jackson Java 8 tarih/saat tipleri (LocalDateTime vb.) için destek -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.datatype</groupId>
+            <artifactId>jackson-datatype-jsr310</artifactId>
+        </dependency>
+
+        <!--
+            MapStruct: DTO ↔ Entity dönüşüm arayüzleri burada tanımlanır.
+            Gerçek implementasyon derleme zamanında üretilir.
+        -->
+        <dependency>
+            <groupId>org.mapstruct</groupId>
+            <artifactId>mapstruct</artifactId>
+        </dependency>
+
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!--
+                Bu modül için Spring Boot plugin'i KULLANMIYORUZ.
+                Spring Boot plugin'i executable JAR üretir ve bir main class arar.
+                common-lib'in main class'ı yoktur — sadece normal JAR olarak paketlenir.
+                Diğer servislerin pom.xml'inde spring-boot-maven-plugin tanımlanacak.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+
+</project>

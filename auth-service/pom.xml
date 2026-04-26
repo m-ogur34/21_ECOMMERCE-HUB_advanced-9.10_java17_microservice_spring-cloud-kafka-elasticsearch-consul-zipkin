@@ -1,0 +1,227 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    auth-service - Alt Modül POM
+    ==============================
+    Kimlik doğrulama ve yetkilendirme servisi.
+    Sorumlulukları:
+    - Kullanıcı kaydı (register) ve girişi (login)
+    - JWT access token + refresh token üretimi ve doğrulaması
+    - Spring Security konfigürasyonu
+    - BCrypt ile şifre hashleme
+    - Rol bazlı erişim kontrolü (RBAC)
+
+    Bu modül tam bir Spring Boot uygulamasıdır — kendi başına çalışır.
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+             https://maven.apache.org/xsd/maven-4.0.0.xsd">
+
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.ecommerce</groupId>
+        <artifactId>ecommerce-hub</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>auth-service</artifactId>
+    <packaging>jar</packaging>
+    <name>ECommerceHub - Auth Service</name>
+    <description>JWT tabanlı kimlik doğrulama ve yetkilendirme servisi</description>
+
+    <dependencies>
+
+        <!-- ===== CORE SPRING BOOT ===== -->
+
+        <!--
+            Spring Web: REST API endpoint'leri (@RestController, @GetMapping vb.) için.
+            Embedded Tomcat sunucusunu da içerir — ayrıca sunucu kurulumu gerekmez.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+
+        <!--
+            Spring Security: kimlik doğrulama ve yetkilendirme altyapısı.
+            Filter chain, BCryptPasswordEncoder, SecurityContext yönetimi sağlar.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security</artifactId>
+        </dependency>
+
+        <!--
+            Spring Data JPA: veritabanı işlemleri için ORM katmanı.
+            Repository pattern: JpaRepository, findByXxx gibi metodlar otomatik üretilir.
+            Hibernate JPA implementasyonu olarak kullanılır.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-jpa</artifactId>
+        </dependency>
+
+        <!--
+            Spring Validation: istek gövdelerinde (@RequestBody) doğrulama için.
+            @Valid, @NotNull, @Email gibi annotationları aktifleştirir.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-validation</artifactId>
+        </dependency>
+
+        <!--
+            Spring Actuator: sağlık kontrolü (/actuator/health), metrik toplama,
+            uygulama bilgileri gibi operasyonel endpoint'ler sağlar.
+            Kubernetes liveness/readiness probe'larında kullanılır.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+
+        <!-- ===== VERİTABANI ===== -->
+
+        <!--
+            PostgreSQL JDBC Driver: Java uygulaması ile PostgreSQL arasındaki köprü.
+            'runtime' scope: derleme sırasında gerekmez, çalışma anında classpath'te olmalı.
+        -->
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
+        <!--
+            Flyway: veritabanı migration aracı.
+            SQL script dosyalarını (V1__, V2__ vb.) sırayla çalıştırarak
+            şema değişikliklerini versiyon kontrolüne alır.
+            Uygulama başlarken otomatik çalışır.
+        -->
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-core</artifactId>
+        </dependency>
+
+        <!-- Flyway'in PostgreSQL desteği için ek modül (Flyway 9+ için zorunlu) -->
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-database-postgresql</artifactId>
+            <version>10.10.0</version>
+        </dependency>
+
+        <!-- ===== JWT ===== -->
+
+        <!-- JWT API: token oluşturma/parse etme arayüzü -->
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-api</artifactId>
+        </dependency>
+
+        <!-- JWT implementasyon (runtime'da gerekli) -->
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-impl</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
+        <!-- JWT Jackson entegrasyonu (JSON payload için) -->
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-jackson</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
+        <!-- ===== SPRING CLOUD ===== -->
+
+        <!--
+            Consul Discovery: servis kendini Consul'a kaydeder.
+            API Gateway, bu kayıt üzerinden auth-service'i bulur (service discovery).
+            Hard-coded URL kullanmak yerine servis adıyla çözümleme yapılır.
+        -->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-consul-discovery</artifactId>
+        </dependency>
+
+        <!-- ===== OBSERVABILITY (İZLENEBİLİRLİK) ===== -->
+
+        <!--
+            Micrometer Tracing: distributed tracing için köprü.
+            Her isteğe trace-id ve span-id ekler, Zipkin'e gönderir.
+        -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-tracing-bridge-brave</artifactId>
+        </dependency>
+
+        <!-- Zipkin'e trace verisi göndermek için Brave reporter -->
+        <dependency>
+            <groupId>io.zipkin.reporter2</groupId>
+            <artifactId>zipkin-reporter-brave</artifactId>
+        </dependency>
+
+        <!-- ===== ORTAK KÜTÜPHANE ===== -->
+
+        <!--
+            Projemizin common-lib modülü: DTO, exception, constants burada.
+            Versiyon belirtmiyoruz — parent POM'daki dependencyManagement'tan alınır.
+        -->
+        <dependency>
+            <groupId>com.ecommerce</groupId>
+            <artifactId>common-lib</artifactId>
+        </dependency>
+
+        <!-- ===== MAPPING ===== -->
+        <dependency>
+            <groupId>org.mapstruct</groupId>
+            <artifactId>mapstruct</artifactId>
+        </dependency>
+
+        <!-- ===== TEST ===== -->
+
+        <!--
+            Spring Security Test: @WithMockUser, mockMvc security testleri için.
+            Controller katmanı testlerinde kimlik doğrulamayı simüle eder.
+        -->
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!--
+            Testcontainers PostgreSQL: integration testlerde gerçek PostgreSQL
+            konteyneri başlatır. Mock yerine gerçek DB kullanmak güvenilirlik sağlar.
+        -->
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!--
+                Spring Boot Maven Plugin: 'mvn package' ile executable JAR üretir.
+                'mvn spring-boot:run' ile geliştirme sırasında servisi başlatır.
+                Docker build'de bu JAR kullanılır.
+            -->
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+
+</project>

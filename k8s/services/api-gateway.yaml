@@ -1,0 +1,176 @@
+---
+# =====================================================================
+# API Gateway - Tüm dış istekler buradan girer
+# WebFlux tabanlı (reactive) — yüksek throughput için.
+# NodePort veya LoadBalancer ile dışarıya açılır.
+# Production'da Ingress Controller (nginx, traefik) kullan.
+# =====================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway
+  namespace: ecommerce
+  labels:
+    app: api-gateway
+    version: v1
+spec:
+  replicas: 2  # Gateway kritik — her zaman 2+ instance
+  selector:
+    matchLabels:
+      app: api-gateway
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: api-gateway
+        version: v1
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/actuator/prometheus"
+        prometheus.io/port: "8080"
+    spec:
+      terminationGracePeriodSeconds: 30
+      # Gateway, auth-service hazır olmadan başlamamalı
+      initContainers:
+        - name: wait-for-auth-service
+          image: busybox:1.35
+          command: ['sh', '-c', 'until nc -z auth-service-svc 8081; do echo "Auth service bekleniyor..."; sleep 5; done']
+        - name: wait-for-redis
+          image: busybox:1.35
+          command: ['sh', '-c', 'until nc -z redis-svc 6379; do echo "Redis bekleniyor..."; sleep 2; done']
+      containers:
+        - name: api-gateway
+          image: ecommerce/api-gateway:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          env:
+            - name: REDIS_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: REDIS_HOST
+            - name: REDIS_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: REDIS_PORT
+            - name: CONSUL_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: CONSUL_HOST
+            - name: ZIPKIN_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: ZIPKIN_URL
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: JWT_SECRET
+            - name: SERVER_PORT
+              value: "8080"
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8080
+            initialDelaySeconds: 60
+            periodSeconds: 15
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          startupProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8080
+            failureThreshold: 30
+            periodSeconds: 10
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "200m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+---
+# NodePort: Host makineden localhost:30080 ile erişim
+# Production'da LoadBalancer veya Ingress kullan
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-gateway-svc
+  namespace: ecommerce
+  labels:
+    app: api-gateway
+spec:
+  selector:
+    app: api-gateway
+  ports:
+    - port: 8080
+      targetPort: 8080
+      nodePort: 30080  # Host: localhost:30080 → Gateway:8080
+  type: NodePort
+---
+# =====================================================================
+# Ingress - Production için önerilen yaklaşım
+# nginx ingress controller kurulu olmalı:
+# kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/cloud/deploy.yaml
+# =====================================================================
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ecommerce-ingress
+  namespace: ecommerce
+  annotations:
+    # nginx ingress controller kullanıyoruz
+    kubernetes.io/ingress.class: "nginx"
+    # Rate limiting: IP başına 100 req/dakika
+    nginx.ingress.kubernetes.io/limit-rps: "100"
+    # SSL redirect: HTTP → HTTPS
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    # Request body boyutu (upload için)
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+spec:
+  rules:
+    # Host bazlı yönlendirme — production'da gerçek domain kullan
+    - host: ecommerce.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: api-gateway-svc
+                port:
+                  number: 8080
+    # Monitoring araçları için ayrı subdomain
+    - host: grafana.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: grafana-svc
+                port:
+                  number: 3000
+    - host: zipkin.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: zipkin-svc
+                port:
+                  number: 9411

@@ -1,0 +1,57 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: ecommerce
+  labels:
+    app.kubernetes.io/part-of: ecommerce-hub
+data:
+  # =====================================================================
+  # Uygulama Yapılandırma Değerleri (Gizli Olmayan)
+  # Şifreler ve tokenlar Secret'a taşınmıştır.
+  # ConfigMap değiştirilince pod yeniden başlatılmalıdır.
+  # =====================================================================
+
+  # --- Veritabanı Bağlantı Ayarları ---
+  # Her servis kendi PostgreSQL pod'una bağlanır (Database per Service pattern)
+  AUTH_DB_HOST: "postgres-auth-svc"
+  AUTH_DB_PORT: "5432"
+  AUTH_DB_NAME: "auth_db"
+
+  PRODUCT_DB_HOST: "postgres-product-svc"
+  PRODUCT_DB_PORT: "5432"
+  PRODUCT_DB_NAME: "product_db"
+
+  ORDER_DB_HOST: "postgres-order-svc"
+  ORDER_DB_PORT: "5432"
+  ORDER_DB_NAME: "order_db"
+
+  NOTIFICATION_DB_HOST: "postgres-notification-svc"
+  NOTIFICATION_DB_PORT: "5432"
+  NOTIFICATION_DB_NAME: "notification_db"
+
+  # --- Redis ---
+  REDIS_HOST: "redis-svc"
+  REDIS_PORT: "6379"
+
+  # --- Kafka ---
+  # Kafka cluster içinde 3 broker olursa: kafka-0:9092,kafka-1:9092,kafka-2:9092
+  KAFKA_BOOTSTRAP_SERVERS: "kafka-svc:9092"
+
+  # --- Elasticsearch ---
+  ES_HOST: "elasticsearch-svc"
+  ES_PORT: "9200"
+
+  # --- Consul (Service Discovery) ---
+  CONSUL_HOST: "consul-svc"
+  CONSUL_PORT: "8500"
+
+  # --- Zipkin (Distributed Tracing) ---
+  ZIPKIN_URL: "http://zipkin-svc:9411"
+
+  # --- Servis Port Numaraları ---
+  AUTH_SERVER_PORT: "8081"
+  PRODUCT_SERVER_PORT: "8082"
+  ORDER_SERVER_PORT: "8083"
+  NOTIFICATION_SERVER_PORT: "8084"
+  GATEWAY_SERVER_PORT: "8080"

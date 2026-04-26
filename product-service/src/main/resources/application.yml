@@ -1,0 +1,110 @@
+# =====================================================================
+# Product Service - Uygulama Yapılandırması
+# =====================================================================
+
+spring:
+  application:
+    name: product-service
+
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:product_db}
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:postgres}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 15
+      minimum-idle: 3
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+    show-sql: false
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+
+  # ---- REDIS ----
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}      # Boş = şifresiz Redis
+      timeout: 2000ms                   # Bağlantı zaman aşımı
+      lettuce:                          # Lettuce: varsayılan async Redis istemcisi
+        pool:
+          max-active: 8                 # Maksimum eş zamanlı bağlantı
+          max-idle: 4                   # Havuzda bekleyen maksimum boş bağlantı
+          min-idle: 1
+
+    # ---- ELASTICSEARCH ----
+    elasticsearch:
+      repositories:
+        enabled: true                   # Spring Data ES repository'leri aktif et
+
+  # ---- KAFKA ----
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      group-id: product-service-group
+      auto-offset-reset: earliest       # Yeni consumer group için en baştan oku
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.trusted.packages: "com.ecommerce.common.event"
+      enable-auto-commit: false         # Manuel acknowledge için otomatik commit kapat
+    listener:
+      ack-mode: MANUAL                  # @KafkaListener'da Acknowledgment.acknowledge() çağrılmalı
+
+# ---- ELASTICSEARCH BAĞLANTI ----
+elasticsearch:
+  host: ${ES_HOST:localhost}
+  port: ${ES_PORT:9200}
+  username: ${ES_USERNAME:}
+  password: ${ES_PASSWORD:}
+
+# ---- JWT (Token doğrulama için — auth-service ile aynı secret) ----
+jwt:
+  secret: ${JWT_SECRET:404E635266556A586E3272357538782F413F4428472B4B6250645367566B5970}
+
+server:
+  port: ${SERVER_PORT:8082}
+
+spring.cloud.consul:
+  host: ${CONSUL_HOST:localhost}
+  port: ${CONSUL_PORT:8500}
+  discovery:
+    enabled: true
+    register: true
+    instance-id: ${spring.application.name}-${server.port}
+    health-check-path: /actuator/health
+    health-check-interval: 15s
+    prefer-ip-address: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+  tracing:
+    sampling:
+      probability: 1.0
+
+spring.zipkin:
+  base-url: ${ZIPKIN_URL:http://localhost:9411}
+  enabled: true
+
+logging:
+  level:
+    com.ecommerce.product: DEBUG
+    org.springframework.cache: DEBUG    # Cache hit/miss logları için
+    org.springframework.data.elasticsearch: INFO
+    root: INFO

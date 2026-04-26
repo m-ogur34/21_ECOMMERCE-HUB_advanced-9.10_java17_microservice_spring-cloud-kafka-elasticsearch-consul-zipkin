@@ -1,0 +1,180 @@
+---
+# =====================================================================
+# Zookeeper - Kafka Koordinasyon
+# StatefulSet: her pod sabit hostname alır (zookeeper-0, zookeeper-1...)
+# Tek node dev ortamı — production'da 3 node ZK cluster gerekir.
+# =====================================================================
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: zookeeper
+  namespace: ecommerce
+  labels:
+    app: zookeeper
+spec:
+  serviceName: "zookeeper-svc"
+  replicas: 1
+  selector:
+    matchLabels:
+      app: zookeeper
+  template:
+    metadata:
+      labels:
+        app: zookeeper
+    spec:
+      containers:
+        - name: zookeeper
+          image: confluentinc/cp-zookeeper:7.5.0
+          ports:
+            - containerPort: 2181
+          env:
+            - name: ZOOKEEPER_CLIENT_PORT
+              value: "2181"
+            - name: ZOOKEEPER_TICK_TIME
+              value: "2000"
+          livenessProbe:
+            exec:
+              # ZK four-letter word command: 'ruok' → 'imok'
+              command: ["bash", "-c", "echo ruok | nc -w 2 localhost 2181 | grep imok"]
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          readinessProbe:
+            exec:
+              command: ["bash", "-c", "echo ruok | nc -w 2 localhost 2181 | grep imok"]
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "250m"
+          volumeMounts:
+            - name: zookeeper-storage
+              mountPath: /var/lib/zookeeper/data
+  volumeClaimTemplates:
+    - metadata:
+        name: zookeeper-storage
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: zookeeper-svc
+  namespace: ecommerce
+  labels:
+    app: zookeeper
+spec:
+  selector:
+    app: zookeeper
+  ports:
+    - port: 2181
+      targetPort: 2181
+  type: ClusterIP
+---
+# =====================================================================
+# Apache Kafka
+# Kafka broker'ı Zookeeper'a bağlıdır.
+# KAFKA_ADVERTISED_LISTENERS: Cluster içi erişim için kafka-svc:9092
+# =====================================================================
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: kafka
+  namespace: ecommerce
+  labels:
+    app: kafka
+spec:
+  serviceName: "kafka-svc"
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kafka
+  template:
+    metadata:
+      labels:
+        app: kafka
+    spec:
+      # Kafka, Zookeeper hazır olmadan başlamamalı
+      initContainers:
+        - name: wait-for-zookeeper
+          image: busybox:1.35
+          command: ['sh', '-c', 'until nc -z zookeeper-svc 2181; do echo "Zookeeper bekleniyor..."; sleep 2; done']
+      containers:
+        - name: kafka
+          image: confluentinc/cp-kafka:7.5.0
+          ports:
+            - containerPort: 9092
+          env:
+            - name: KAFKA_BROKER_ID
+              value: "1"
+            - name: KAFKA_ZOOKEEPER_CONNECT
+              value: "zookeeper-svc:2181"
+            # Cluster içi listener — dış erişim gerekmez
+            - name: KAFKA_ADVERTISED_LISTENERS
+              value: "PLAINTEXT://kafka-svc:9092"
+            - name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP
+              value: "PLAINTEXT:PLAINTEXT"
+            - name: KAFKA_INTER_BROKER_LISTENER_NAME
+              value: "PLAINTEXT"
+            - name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR
+              value: "1"  # Production'da 3 olmalı
+            - name: KAFKA_AUTO_CREATE_TOPICS_ENABLE
+              value: "true"
+            - name: KAFKA_NUM_PARTITIONS
+              value: "3"
+          livenessProbe:
+            exec:
+              command:
+                - bash
+                - -c
+                - kafka-broker-api-versions --bootstrap-server localhost:9092 > /dev/null 2>&1
+            initialDelaySeconds: 60
+            periodSeconds: 15
+            failureThreshold: 5
+          readinessProbe:
+            exec:
+              command:
+                - bash
+                - -c
+                - kafka-broker-api-versions --bootstrap-server localhost:9092 > /dev/null 2>&1
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "1Gi"
+              cpu: "500m"
+          volumeMounts:
+            - name: kafka-storage
+              mountPath: /var/lib/kafka/data
+  volumeClaimTemplates:
+    - metadata:
+        name: kafka-storage
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 5Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka-svc
+  namespace: ecommerce
+  labels:
+    app: kafka
+spec:
+  selector:
+    app: kafka
+  ports:
+    - port: 9092
+      targetPort: 9092
+  type: ClusterIP

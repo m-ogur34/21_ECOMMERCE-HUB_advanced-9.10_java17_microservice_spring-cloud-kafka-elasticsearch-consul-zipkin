@@ -1,0 +1,415 @@
+version: '3.9'
+
+# =====================================================================
+# ECommerceHub - Docker Compose
+# =====================================================================
+# Tüm servisleri ve altyapıyı tek komutla başlatır:
+# docker-compose up -d
+#
+# Servis başlatma sırası (depends_on ile kontrol edilir):
+# 1. Altyapı: PostgreSQL, Redis, Kafka+Zookeeper, Elasticsearch, Consul
+# 2. Zipkin (tracing)
+# 3. Mikroservisler: auth → product → order → notification
+# 4. API Gateway (en son)
+# =====================================================================
+
+# Ortak ağ — tüm servisler bu ağda haberleşir
+networks:
+  ecommerce-net:
+    driver: bridge
+
+# Kalıcı veri depolama — container yeniden başlatılınca veri kaybolmaz
+volumes:
+  postgres-auth-data:
+  postgres-product-data:
+  postgres-order-data:
+  postgres-notification-data:
+  redis-data:
+  elasticsearch-data:
+  consul-data:
+  kafka-data:
+  zookeeper-data:
+
+services:
+
+  # ===== ALTYAPI SERVİSLERİ =====
+
+  # ---- PostgreSQL: Auth DB ----
+  postgres-auth:
+    image: postgres:16-alpine
+    container_name: postgres-auth
+    environment:
+      POSTGRES_DB: auth_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"    # Host:Container — localhost:5432'den erişilebilir
+    volumes:
+      - postgres-auth-data:/var/lib/postgresql/data
+    networks:
+      - ecommerce-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d auth_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---- PostgreSQL: Product DB ----
+  postgres-product:
+    image: postgres:16-alpine
+    container_name: postgres-product
+    environment:
+      POSTGRES_DB: product_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5433:5432"    # Host 5433 → Container 5432 (çakışma önleme)
+    volumes:
+      - postgres-product-data:/var/lib/postgresql/data
+    networks:
+      - ecommerce-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d product_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---- PostgreSQL: Order DB ----
+  postgres-order:
+    image: postgres:16-alpine
+    container_name: postgres-order
+    environment:
+      POSTGRES_DB: order_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5434:5432"
+    volumes:
+      - postgres-order-data:/var/lib/postgresql/data
+    networks:
+      - ecommerce-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d order_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---- PostgreSQL: Notification DB ----
+  postgres-notification:
+    image: postgres:16-alpine
+    container_name: postgres-notification
+    environment:
+      POSTGRES_DB: notification_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5435:5432"
+    volumes:
+      - postgres-notification-data:/var/lib/postgresql/data
+    networks:
+      - ecommerce-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d notification_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---- Redis: Cache + Rate Limiting ----
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    # maxmemory-policy allkeys-lru: bellek dolunca en az kullanılanı sil
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - ecommerce-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---- Zookeeper: Kafka koordinasyon ----
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    volumes:
+      - zookeeper-data:/var/lib/zookeeper/data
+    networks:
+      - ecommerce-net
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 2181 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---- Apache Kafka ----
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      # İki listener: internal (docker ağı) ve external (host)
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1  # Tek broker — production'da 3 olmalı
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"     # Topic otomatik oluşturulsun
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 1
+      KAFKA_NUM_PARTITIONS: 3                     # 3 partition: 3 consumer instance ile paralel
+    ports:
+      - "29092:29092"  # External listener: localhost:29092
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    networks:
+      - ecommerce-net
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092 > /dev/null 2>&1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  # ---- Elasticsearch ----
+  elasticsearch:
+    image: elasticsearch:8.11.0
+    container_name: elasticsearch
+    environment:
+      - discovery.type=single-node           # Tek node — production'da cluster
+      - xpack.security.enabled=false         # Güvenliği kapat (dev ortamı)
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"   # JVM heap belleği
+    ports:
+      - "9200:9200"   # HTTP API
+      - "9300:9300"   # Transport (node-to-node)
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
+    networks:
+      - ecommerce-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health | grep -q '\"status\":\"green\\|yellow\"'"]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+
+  # ---- Consul: Service Discovery ----
+  consul:
+    image: consul:1.17
+    container_name: consul
+    command: consul agent -dev -client=0.0.0.0
+    # -dev: development mode — kalıcı storage olmadan
+    # -client=0.0.0.0: tüm network interface'lerden erişilebilir
+    ports:
+      - "8500:8500"   # UI ve HTTP API
+      - "8600:8600/udp" # DNS
+    volumes:
+      - consul-data:/consul/data
+    networks:
+      - ecommerce-net
+    healthcheck:
+      test: ["CMD", "consul", "members"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---- Zipkin: Distributed Tracing ----
+  zipkin:
+    image: openzipkin/zipkin:3
+    container_name: zipkin
+    ports:
+      - "9411:9411"   # UI: http://localhost:9411
+    networks:
+      - ecommerce-net
+
+  # ---- Grafana: Metrik Dashboard ----
+  grafana:
+    image: grafana/grafana:10.2.0
+    container_name: grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin123
+      - GF_USERS_ALLOW_SIGN_UP=false
+    ports:
+      - "3000:3000"   # UI: http://localhost:3000
+    networks:
+      - ecommerce-net
+
+  # ===== MİKROSERVİSLER =====
+
+  # ---- Auth Service ----
+  auth-service:
+    build:
+      context: ..           # Root dizin — Dockerfile'daki multi-stage için
+      dockerfile: auth-service/Dockerfile
+    container_name: auth-service
+    environment:
+      DB_HOST: postgres-auth
+      DB_PORT: 5432
+      DB_NAME: auth_db
+      DB_USERNAME: postgres
+      DB_PASSWORD: postgres
+      JWT_SECRET: 404E635266556A586E3272357538782F413F4428472B4B6250645367566B5970
+      CONSUL_HOST: consul
+      CONSUL_PORT: 8500
+      ZIPKIN_URL: http://zipkin:9411
+      SERVER_PORT: 8081
+    ports:
+      - "8081:8081"
+    depends_on:
+      postgres-auth:
+        condition: service_healthy
+      consul:
+        condition: service_healthy
+    networks:
+      - ecommerce-net
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8081/actuator/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s  # JVM başlatma süresi için bekleme
+
+  # ---- Product Service ----
+  product-service:
+    build:
+      context: ..
+      dockerfile: product-service/Dockerfile
+    container_name: product-service
+    environment:
+      DB_HOST: postgres-product
+      DB_PORT: 5432
+      DB_NAME: product_db
+      DB_USERNAME: postgres
+      DB_PASSWORD: postgres
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      ES_HOST: elasticsearch
+      ES_PORT: 9200
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      JWT_SECRET: 404E635266556A586E3272357538782F413F4428472B4B6250645367566B5970
+      CONSUL_HOST: consul
+      ZIPKIN_URL: http://zipkin:9411
+      SERVER_PORT: 8082
+    ports:
+      - "8082:8082"
+    depends_on:
+      postgres-product:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      consul:
+        condition: service_healthy
+    networks:
+      - ecommerce-net
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8082/actuator/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+
+  # ---- Order Service ----
+  order-service:
+    build:
+      context: ..
+      dockerfile: order-service/Dockerfile
+    container_name: order-service
+    environment:
+      DB_HOST: postgres-order
+      DB_PORT: 5432
+      DB_NAME: order_db
+      DB_USERNAME: postgres
+      DB_PASSWORD: postgres
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      JWT_SECRET: 404E635266556A586E3272357538782F413F4428472B4B6250645367566B5970
+      CONSUL_HOST: consul
+      ZIPKIN_URL: http://zipkin:9411
+      SERVER_PORT: 8083
+    ports:
+      - "8083:8083"
+    depends_on:
+      postgres-order:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      consul:
+        condition: service_healthy
+    networks:
+      - ecommerce-net
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8083/actuator/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+
+  # ---- Notification Service ----
+  notification-service:
+    build:
+      context: ..
+      dockerfile: notification-service/Dockerfile
+    container_name: notification-service
+    environment:
+      DB_HOST: postgres-notification
+      DB_PORT: 5432
+      DB_NAME: notification_db
+      DB_USERNAME: postgres
+      DB_PASSWORD: postgres
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      CONSUL_HOST: consul
+      ZIPKIN_URL: http://zipkin:9411
+      SERVER_PORT: 8084
+    ports:
+      - "8084:8084"
+    depends_on:
+      postgres-notification:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    networks:
+      - ecommerce-net
+
+  # ---- API Gateway ----
+  api-gateway:
+    build:
+      context: ..
+      dockerfile: api-gateway/Dockerfile
+    container_name: api-gateway
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      CONSUL_HOST: consul
+      ZIPKIN_URL: http://zipkin:9411
+      JWT_SECRET: 404E635266556A586E3272357538782F413F4428472B4B6250645367566B5970
+      SERVER_PORT: 8080
+    ports:
+      - "8080:8080"   # TÜM istekler buraya gelir
+    depends_on:
+      redis:
+        condition: service_healthy
+      consul:
+        condition: service_healthy
+      auth-service:
+        condition: service_healthy
+    networks:
+      - ecommerce-net
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8080/actuator/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s

@@ -1,0 +1,95 @@
+---
+# =====================================================================
+# Elasticsearch - Full-Text Search
+# StatefulSet: indeks verileri kalıcı olmalı.
+# single-node: dev ortamı — production'da 3+ node cluster gerekir.
+# =====================================================================
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: elasticsearch
+  namespace: ecommerce
+  labels:
+    app: elasticsearch
+spec:
+  serviceName: "elasticsearch-svc"
+  replicas: 1
+  selector:
+    matchLabels:
+      app: elasticsearch
+  template:
+    metadata:
+      labels:
+        app: elasticsearch
+    spec:
+      # ES, vm.max_map_count'u artırmak için root yetkisi gerektirir.
+      # InitContainer ile host kernel parametresini ayarla.
+      initContainers:
+        - name: increase-vm-max-map-count
+          image: busybox:1.35
+          command: ["sysctl", "-w", "vm.max_map_count=262144"]
+          securityContext:
+            privileged: true  # Host kernel parametresi için gerekli
+      containers:
+        - name: elasticsearch
+          image: elasticsearch:8.11.0
+          ports:
+            - containerPort: 9200  # HTTP REST API
+            - containerPort: 9300  # Transport (node arası iletişim)
+          env:
+            - name: discovery.type
+              value: "single-node"
+            - name: xpack.security.enabled
+              value: "false"  # Dev ortamı — production'da true
+            - name: ES_JAVA_OPTS
+              value: "-Xms512m -Xmx512m"  # Heap: 512mb sabit
+          livenessProbe:
+            httpGet:
+              path: /_cluster/health
+              port: 9200
+            initialDelaySeconds: 60
+            periodSeconds: 20
+            failureThreshold: 5
+          readinessProbe:
+            httpGet:
+              path: /_cluster/health?wait_for_status=yellow&timeout=5s
+              port: 9200
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          resources:
+            requests:
+              memory: "1Gi"
+              cpu: "250m"
+            limits:
+              memory: "1.5Gi"  # ES heap 512mb + OS overhead
+              cpu: "500m"
+          volumeMounts:
+            - name: elasticsearch-storage
+              mountPath: /usr/share/elasticsearch/data
+  volumeClaimTemplates:
+    - metadata:
+        name: elasticsearch-storage
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 10Gi  # Elasticsearch indeks verileri büyür
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: elasticsearch-svc
+  namespace: ecommerce
+  labels:
+    app: elasticsearch
+spec:
+  selector:
+    app: elasticsearch
+  ports:
+    - name: http
+      port: 9200
+      targetPort: 9200
+    - name: transport
+      port: 9300
+      targetPort: 9300
+  type: ClusterIP

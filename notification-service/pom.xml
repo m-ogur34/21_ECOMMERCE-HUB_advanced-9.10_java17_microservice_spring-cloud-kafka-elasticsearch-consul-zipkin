@@ -1,0 +1,154 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    notification-service - Alt Modül POM
+    ========================================
+    Bildirim servisi.
+    Sorumlulukları:
+    - Kafka'dan sipariş olaylarını dinlemek (consumer)
+    - E-posta ve SMS bildirimi simüle etmek
+    - ActiveMQ ile dahili (internal) bildirim kuyruğu
+    - Bildirim loglarını veritabanına kaydetmek
+
+    Bu servis tamamen reaktif / olay güdümlü (event-driven) çalışır.
+    Dışarıdan HTTP isteği almaz, sadece Kafka/ActiveMQ mesajlarına tepki verir.
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+             https://maven.apache.org/xsd/maven-4.0.0.xsd">
+
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.ecommerce</groupId>
+        <artifactId>ecommerce-hub</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>notification-service</artifactId>
+    <packaging>jar</packaging>
+    <name>ECommerceHub - Notification Service</name>
+    <description>Kafka ve ActiveMQ ile bildirim servisi (e-posta/SMS simülasyonu)</description>
+
+    <dependencies>
+
+        <!-- ===== CORE SPRING BOOT ===== -->
+
+        <!--
+            Web starter: minimal REST endpoint (health check, bildirim durumu sorgusu).
+            Notification service esas olarak mesaj dinler ama actuator için web lazım.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-jpa</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+
+        <!-- ===== MESSAGING: KAFKA ===== -->
+
+        <!--
+            Spring Kafka: order-service'in publish ettiği olayları dinlemek için.
+            @KafkaListener annotasyonu ile topic'lere abone olunur.
+            Sipariş oluşturuldu, onaylandı, kargoya verildi gibi olaylar buraya gelir.
+        -->
+        <dependency>
+            <groupId>org.springframework.kafka</groupId>
+            <artifactId>spring-kafka</artifactId>
+        </dependency>
+
+        <!-- ===== MESSAGING: ACTIVEMQ ===== -->
+
+        <!--
+            ActiveMQ Artemis Starter: dahili bildirim kuyruğu için.
+            Kafka'dan gelen olaylar önce ActiveMQ kuyruğuna konur,
+            sonra e-posta ve SMS worker'ları bu kuyruktan okur.
+            Bu iki farklı messaging sisteminin aynı projede kullanım örneğidir.
+
+            Kafka: dağıtık, yüksek hacimli, serviler arası iletişim için
+            ActiveMQ: tek servis içi, daha basit, transactional mesajlaşma için
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-artemis</artifactId>
+        </dependency>
+
+        <!--
+            ActiveMQ Artemis embedded: test ve geliştirme ortamında
+            ayrı bir ActiveMQ sunucusu kurmadan çalışmak için.
+            Üretimde bu bağımlılık çıkarılır, gerçek Artemis sunucusuna bağlanılır.
+        -->
+        <dependency>
+            <groupId>org.apache.activemq</groupId>
+            <artifactId>artemis-jakarta-server</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
+        <!-- ===== VERİTABANI ===== -->
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-core</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-database-postgresql</artifactId>
+            <version>10.10.0</version>
+        </dependency>
+
+        <!-- ===== SPRING CLOUD ===== -->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-consul-discovery</artifactId>
+        </dependency>
+
+        <!-- ===== OBSERVABILITY ===== -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-tracing-bridge-brave</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.zipkin.reporter2</groupId>
+            <artifactId>zipkin-reporter-brave</artifactId>
+        </dependency>
+
+        <!-- ===== ORTAK KÜTÜPHANE ===== -->
+        <dependency>
+            <groupId>com.ecommerce</groupId>
+            <artifactId>common-lib</artifactId>
+        </dependency>
+
+        <!-- ===== TEST ===== -->
+        <dependency>
+            <groupId>org.springframework.kafka</groupId>
+            <artifactId>spring-kafka-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+
+</project>

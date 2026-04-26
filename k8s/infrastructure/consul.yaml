@@ -1,0 +1,72 @@
+---
+# =====================================================================
+# Consul - Service Discovery & Health Check
+# Dev modda çalışır (-dev flag) — kalıcı storage olmadan.
+# Production'da Consul cluster (3+ node) kurulmalı.
+# =====================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: consul
+  namespace: ecommerce
+  labels:
+    app: consul
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: consul
+  template:
+    metadata:
+      labels:
+        app: consul
+    spec:
+      containers:
+        - name: consul
+          image: consul:1.17
+          # -dev: hafızada çalışır, restart'ta veriler kaybolur
+          # -client=0.0.0.0: tüm interface'lerden API erişimi
+          command: ["consul", "agent", "-dev", "-client=0.0.0.0"]
+          ports:
+            - containerPort: 8500  # HTTP UI + API
+            - containerPort: 8600  # DNS
+              protocol: UDP
+          livenessProbe:
+            httpGet:
+              path: /v1/status/leader
+              port: 8500
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /v1/status/leader
+              port: 8500
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "128Mi"
+              cpu: "100m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: consul-svc
+  namespace: ecommerce
+  labels:
+    app: consul
+spec:
+  selector:
+    app: consul
+  ports:
+    - name: http
+      port: 8500
+      targetPort: 8500
+    - name: dns
+      port: 8600
+      targetPort: 8600
+      protocol: UDP
+  type: ClusterIP

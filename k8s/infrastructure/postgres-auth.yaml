@@ -1,0 +1,93 @@
+---
+# =====================================================================
+# PostgreSQL - Auth Service Veritabanı
+# Her mikroservisin kendi DB'si var (Database per Service pattern).
+# StatefulSet: pod yeniden başlasa bile aynı PVC'ye bağlanır.
+# =====================================================================
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres-auth
+  namespace: ecommerce
+  labels:
+    app: postgres-auth
+    app.kubernetes.io/part-of: ecommerce-hub
+spec:
+  serviceName: "postgres-auth-svc"  # Headless service ile eşleşmeli
+  replicas: 1  # PostgreSQL tek node — HA için Patroni/CloudNative-PG kullan
+  selector:
+    matchLabels:
+      app: postgres-auth
+  template:
+    metadata:
+      labels:
+        app: postgres-auth
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: "auth_db"
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: DB_USERNAME
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: DB_PASSWORD
+          # Liveness: process çalışıyor mu? Çalışmıyorsa container yeniden başlatılır.
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "postgres", "-d", "auth_db"]
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 3
+          # Readiness: trafik almaya hazır mı? Hazır değilse Service trafiği yönlendirmez.
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "postgres", "-d", "auth_db"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          # Kaynak sınırları: OOM killer'dan korur, fair scheduling sağlar
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          volumeMounts:
+            - name: postgres-auth-storage
+              mountPath: /var/lib/postgresql/data
+  # volumeClaimTemplates: her pod için otomatik PVC oluşturur
+  volumeClaimTemplates:
+    - metadata:
+        name: postgres-auth-storage
+      spec:
+        accessModes: ["ReadWriteOnce"]  # Tek node okuma/yazma
+        resources:
+          requests:
+            storage: 2Gi  # Gerekirse artırılabilir (PVC resize)
+---
+# ClusterIP Service: Cluster içinden erişim için DNS kaydı oluşturur.
+# postgres-auth-svc.ecommerce.svc.cluster.local → postgres-auth pod'u
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-auth-svc
+  namespace: ecommerce
+  labels:
+    app: postgres-auth
+spec:
+  selector:
+    app: postgres-auth
+  ports:
+    - port: 5432
+      targetPort: 5432
+  type: ClusterIP
