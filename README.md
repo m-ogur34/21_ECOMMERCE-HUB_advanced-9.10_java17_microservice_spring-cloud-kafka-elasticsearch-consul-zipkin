@@ -394,3 +394,101 @@ ECommerceHub/
 **Frontend:** Angular 17, Angular Material, Signals, Reactive Forms
 
 **DevOps:** Docker, Docker Compose, Kubernetes, Flyway, Testcontainers
+
+---
+
+## Öğrenilen Kavramlar
+
+### Spring Cloud & Microservices
+```
+API Gateway (Spring Cloud Gateway):
+  - Tüm istek trafiği tek noktadan girer
+  - JWT doğrulama gateway'de yapılır (her servise gerek yok)
+  - Rate limiting: Redis ZSET ile sliding window
+  - Path rewriting: /api/products → product-service:8082/products
+
+Service Discovery (Consul):
+  - Servisler kayıt olur (register), sağlıkları takip edilir
+  - Client-side LB: product-service birden fazla instance → round-robin
+  - Health check: /actuator/health endpoint'i izlenir
+
+Distributed Tracing (Zipkin):
+  - Her isteğe traceId verilir
+  - Servisler arası çağrılar span ile izlenir
+  - Latency bottleneck'i görselleştirilir (hangi servis ne kadar sürdü)
+```
+
+### Resilience Patterns
+```
+Circuit Breaker (Resilience4J):
+  CLOSED   → normal akış, istek geçer
+  OPEN     → hata eşiği aşıldı (50%), istek reddedilir, fallback çalışır
+  HALF-OPEN → deneme isteği: başarılıysa CLOSED'a döner
+
+Retry:
+  Geçici hatalar (network glitch) için maxAttempts=3, wait=500ms
+
+Time Limiter:
+  Zaman aşımı: 3 saniye yanıt gelmezse → TimeoutException → fallback
+
+Bulkhead:
+  Her servis için thread havuzu izole edilir → bir servis flood'u diğerini etkilemez
+```
+
+### Saga Pattern
+```
+Sipariş oluşturma adımları (Orchestration Saga):
+  1. CreateOrderStep   → Order PENDING oluştur (lokal transaction)
+  2. ReserveStockStep  → Kafka ORDER_CREATED event yayınla
+  3. [product-service] → Stok rezerve et → STOCK_RESERVED veya STOCK_FAILED event
+  4. OrderSaga         → STOCK_RESERVED ise CONFIRMED, STOCK_FAILED ise CANCELLED
+
+Compensating Transaction (LIFO):
+  Step 3 başarısız → Step 2 compensate (stok rezervasyonu iptal)
+  Step 2 başarısız → Step 1 compensate (order CANCELLED)
+  En son adım ilk geri alınır
+```
+
+### Gözlemlenebilirlik (Observability)
+```
+3 sütun:
+  Logs   → Slf4j + logback-spring.xml (JSON format, Kibana'ya gönderilir)
+  Metrics → Micrometer + Prometheus (custom metric: orders.created.count)
+  Traces  → Micrometer Tracing + Zipkin (servisler arası latency map)
+
+Actuator endpoint'leri:
+  /actuator/health   → readiness/liveness (Kubernetes probe)
+  /actuator/metrics  → JVM, HTTP, custom metric
+  /actuator/info     → build version, git commit
+```
+
+---
+
+## Mülakat Soruları
+
+**Q: API Gateway pattern neden kullanılır?**
+A: İstemci her servise ayrı ayrı istek atmak zorunda kalır (N servis × M endpoint = karmaşık). API Gateway tek giriş noktası sağlar: routing, auth, rate limiting, SSL termination, CORS merkezi yönetilir. Cross-cutting concerns her serviste tekrarlanmaz. Dezavantaj: SPOF riski → Gateway'i HA (High Availability) yapılandırmak kritik.
+
+**Q: Circuit Breaker neden `if-else try-catch`'ten daha iyi?**
+A: try-catch her hatada çağrıyı dener → başarısız servis flood'lanır. Circuit Breaker: belirli hata eşiği aşıldığında OPEN — çağrı yapılmaz, fallback anında döner. Bu sayede başarısız servis kurtarma şansı bulur (cascade failure önlenir). Resilience4J bunları ölçer: hata oranı, response time, concurrent calls.
+
+**Q: Saga Choreography vs Orchestration farkı?**
+A: Choreography: her servis event'i dinler ve kendi tepkisini verir (Kafka ile). Servisler birbirinden habersiz çalışır (loose coupling). Dezavantaj: tüm akışı tek yerden görmek zor, debug karmaşık. Orchestration: merkezi koordinatör (OrderSaga) her adımı yönetir. Akış görünür ve kontrollü. Bu projede Orchestration → daha kolay debug, explicit compensate.
+
+**Q: Consul vs Eureka farkı?**
+A: Eureka: Netflix, Java-only client, AP (availability over consistency), Spring Cloud Eureka ile kolay entegrasyon. Consul: HashiCorp, multi-language support (Go/Python/Java), CP (consistency over availability), built-in key-value store ve DNS desteği. Consul production'da daha yaygın tercih çünkü polyglot mimaride tüm servisler entegre olabilir.
+
+**Q: Zipkin tracing nasıl çalışır?**
+A: Her isteğe benzersiz traceId atanır. Her servis çağrısı bir span oluşturur. SpanID → parent SpanID ilişkisi ile ağaç yapısı. Micrometer Tracing otomatik olarak HTTP header'a B3 propagation header'ı ekler (X-B3-TraceId). Downstream servis bu header'ı okuyarak aynı trace'e span ekler. Zipkin UI'da tüm zinciri görselleştirirsiniz.
+
+**Q: Redis rate limiting nasıl implement edilir?**
+A: Sliding Window Log algoritması: Redis ZSET (sorted set) ile her istek timestamp score olarak eklenir. `ZREMRANGEBYSCORE` ile window dışı eski kayıtlar silinir. `ZCARD` ile mevcut sayı kontrol edilir. Limit aşıldıysa 429 Too Many Requests. Lua script ile atomic — race condition yok. Bu projede Gateway filtresi: her IP için `rate-limit:{ip}` key.
+
+**Q: Observer Pattern nasıl uygulandı?**
+A: `ProductEventPublisher` (Observable/Subject): stok değişince `StockChangedEvent` yayınlar. `StockObserver` (@EventListener): Spring application event'i dinler, async (@Async ile) Elasticsearch'te stok günceller. Loose coupling: ProductService StockObserver'ı bilmez. Yeni observer eklemek → sadece yeni @EventListener class.
+
+**Q: OpenFeign vs RestTemplate vs WebClient?**
+A: RestTemplate: blokleyici, eski API, Spring 6'da deprecated. WebClient: reaktif, non-blocking, WebFlux ile kullanılır. OpenFeign: deklaratif HTTP client — interface tanımla, implementasyon Spring üretir. Circuit Breaker, Retry, Interceptor ile kolay entegrasyon. Bu projede: servisler arası sync çağrı için Feign (stok kontrolü), async için Kafka.
+
+**Q: Testcontainers neden kullanılır?**
+A: Entegrasyon testlerinde gerçek DB/Kafka/Redis gerekir ama CI ortamında bunlar kurulu olmayabilir. Testcontainers Docker container'ı test başında başlatır, test bitince kaldırır. H2 in-memory DB'nin sorunu: üretim DB (PostgreSQL) davranışından farklı olabilir (window function, JSONB, index davranışı). Testcontainers gerçek PostgreSQL + gerçek Kafka ile test = production benzeri güven.
