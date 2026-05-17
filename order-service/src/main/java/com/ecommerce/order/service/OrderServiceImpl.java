@@ -24,25 +24,38 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.concurrent.CompletableFuture;
 
 /**
- * Sipariş servisi implementasyonu.
+ * Sipariş Servisi Implementasyonu
+ * =================================
  *
- * Resilience4J Pattern'ları:
+ * OOP - Polimorfizm: Controller OrderService arayüzünü kullanır.
+ *   Spring IoC bu implementasyonu inject eder.
+ *   Test ortamında mock implementasyon kullanılabilir — controller değişmez.
  *
- * @CircuitBreaker (Devre Kesici):
- * - CLOSED: normal çalışma, istekler geçer
- * - OPEN: hata eşiği aşıldı, istekler reddedilir (fallback çalışır)
- * - HALF-OPEN: deneme istekleri gönderilir
- * Faydası: downstream servis düştüğünde ana servisi de düşürmez.
+ * Resilience4J — Hata Dayanıklılık Katmanı:
  *
- * @Retry (Yeniden Deneme):
- * - Geçici hatalarda (network glitch) otomatik tekrar
- * - maxAttempts: kaç kez dene
- * - waitDuration: denemeler arası bekleme
+ *   @CircuitBreaker (Devre Kesici):
+ *     Elektrik sigortasına benzer — devre yanmasın diye önce sigorta atar.
+ *     CLOSED → normal çalışma (istekler geçer)
+ *     %50+ hata sonra OPEN → fallback çalışır, downstream'e istek gitmez
+ *     Belirli süre sonra HALF-OPEN → deneme isteği gönderir
+ *     HALF-OPEN başarılı → CLOSED'a döner
+ *     Neden önemli? Stok servisi düştüğünde sipariş servisi de çökmeden fallback döner.
  *
- * @TimeLimiter (Zaman Sınırlayıcı):
- * - Belirlenen süre içinde yanıt gelmezse timeout
- * - Sarkan (hanging) istekleri önler
- * - CompletableFuture gerektirir
+ *   @Retry (Yeniden Deneme):
+ *     Ağ geçici kesintisinde (500ms timeout) aynı isteği 3 kez tekrar eder.
+ *     Her deneme arası bekleme süresi artabilir (exponential backoff).
+ *     Sadece belirli exception'larda retry yapılır (konfigürasyonda tanımlı).
+ *
+ *   @TimeLimiter (Zaman Sınırlayıcı):
+ *     Stok servisi 5sn içinde yanıt vermezse timeout.
+ *     CompletableFuture gerektirir — asenkron timeout mekanizması.
+ *     Sarkan (hanging) HTTP bağlantıları thread pool'u tüketmez.
+ *
+ * Saga Pattern:
+ *   Sipariş oluşturma çok adımlıdır: DB kaydı + stok rezervasyonu.
+ *   Stok rezervasyonu başarısız → DB kaydı da geri alınmalı.
+ *   Saga: Her adımın "compensating transaction" (telafi) metodu vardır.
+ *   Hata durumunda tamamlanan adımlar ters sırada geri alınır.
  */
 @Slf4j
 @Service
@@ -56,12 +69,24 @@ public class OrderServiceImpl implements OrderService {
     private final OrderEventPublisher eventPublisher;
 
     /**
-     * Yeni sipariş oluşturur — Saga pattern ile.
+     * Yeni sipariş oluşturur.
      *
-     * @CircuitBreaker: Eğer stok servisi veya Kafka defalarca hata verirse
-     * devre açılır ve createOrderFallback() çalışır.
+     * @CircuitBreaker(name="orderService", fallbackMethod="createOrderFallback"):
+     *   Hata eşiği aşılınca createOrderFallback() çağrılır.
+     *   Stok servisi veya Kafka defalarca hata verirse devre açılır.
+     *   Fallback: Kullanıcıya "şu an kullanılamıyor" mesajı — boş yanıt değil.
      *
-     * @Retry: Geçici Kafka bağlantı hatalarında 3 kez tekrar dener.
+     * @Retry(name="orderService"):
+     *   Geçici ağ hatalarında otomatik tekrar.
+     *   3 deneme, her deneme arası 500ms bekleme (application.yml'de konfigüre).
+     *   Idempotency önemli: Aynı sipariş iki kez DB'ye yazılmamalı.
+     *   OrderSaga: Önce idempotency key kontrolü yaparak bunu önler.
+     *
+     * Saga Akışı:
+     *   Adım 1: OrderService DB'ye PENDING sipariş yazar.
+     *   Adım 2: product-service'e stok rezervasyon isteği atar (Feign/RestTemplate).
+     *   Stok yetersiz → Adım 1 compensate: sipariş CANCELLED olarak güncellenir.
+     *   Her iki adım başarılı → Kafka'ya ORDER_CREATED event atılır.
      */
     @Override
     @CircuitBreaker(name = "orderService", fallbackMethod = "createOrderFallback")
@@ -69,7 +94,7 @@ public class OrderServiceImpl implements OrderService {
     public OrderResponse createOrder(OrderRequest request, Long userId, String userEmail) {
         log.info("Sipariş oluşturma başlatılıyor: kullanıcı={}", userId);
 
-        // Saga orkestratörü — tüm adımları koordine eder
+        // Saga: Başarısız adımlarda compensating transaction çalışır
         Order order = orderSaga.execute(request, userId, userEmail);
 
         log.info("Sipariş başarıyla oluşturuldu: {}", order.getOrderNumber());
@@ -78,25 +103,38 @@ public class OrderServiceImpl implements OrderService {
 
     /**
      * CircuitBreaker fallback metodu.
-     * İmzası: aynı parametreler + Throwable
-     * CircuitBreaker açıkken veya hata eşiği aşılınca bu metod çalışır.
+     *
+     * Kural: Fallback metod imzası = orijinal metod imzası + son parametre Throwable.
+     * CircuitBreaker açıkken (OPEN state) bu metod doğrudan çağrılır.
+     * Hata yutulmamalı — kullanıcıya anlamlı hata dönülmeli.
      */
     public OrderResponse createOrderFallback(OrderRequest request, Long userId,
                                               String userEmail, Throwable throwable) {
-        log.error("Sipariş oluşturma devre dışı - fallback çalışıyor: {}", throwable.getMessage());
+        log.error("CircuitBreaker AÇIK - Sipariş servisi fallback çalışıyor: {}", throwable.getMessage());
         throw new BusinessException(
             "Sipariş servisi şu anda kullanılamıyor. Lütfen birkaç dakika sonra tekrar deneyin.",
             "SERVICE_UNAVAILABLE"
         );
     }
 
+    /**
+     * Sipariş detayını getirir.
+     *
+     * Neden sahiplik kontrolü yapılır?
+     *   URL'de /orders/123 — manipülasyonla başkasının siparişi görülebilir.
+     *   JWT'den gelen userId ile siparişin userId'si karşılaştırılır.
+     *   ADMIN rolü kontrolü controller'daki @PreAuthorize ile yapılabilir.
+     *
+     * findByIdWithItems: @EntityGraph veya JOIN FETCH
+     *   items lazy loading yerine tek sorguda gelir — N+1 problemi olmaz.
+     */
     @Override
     @Transactional(readOnly = true)
     public OrderResponse getOrderById(Long id, Long userId) {
         Order order = orderRepository.findByIdWithItems(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Order", id));
 
-        // Kullanıcı sadece kendi siparişine erişebilir (ADMIN hariç)
+        // Güvenlik: Kullanıcı yalnızca kendi siparişine erişebilir
         if (!order.getUserId().equals(userId)) {
             throw new BusinessException("Bu siparişe erişim yetkiniz yok", "FORBIDDEN");
         }
@@ -130,8 +168,20 @@ public class OrderServiceImpl implements OrderService {
     }
 
     /**
-     * Sipariş durumu güncelle — admin işlemi.
-     * OrderStatus.canTransitionTo() ile geçersiz geçişler engellenir.
+     * Sipariş durumu günceller — State Machine pattern.
+     *
+     * State Machine (Durum Makinesi):
+     *   Her sipariş belirli durumlar arasında geçiş yapabilir.
+     *   Geçersiz geçişler (DELIVERED → PENDING) engellenmelidir.
+     *
+     *   Geçerli geçişler:
+     *   PENDING → CONFIRMED → PROCESSING → SHIPPED → DELIVERED
+     *   PENDING/CONFIRMED/PROCESSING → CANCELLED
+     *   DELIVERED → REFUNDED
+     *
+     *   order.transitionTo(newStatus): Geçiş kurallarını kontrol eder.
+     *   Geçersiz geçiş → IllegalStateException fırlatır.
+     *   Bu sayede sipariş durumu dışarıdan rastgele değiştirilemez.
      */
     @Override
     public OrderResponse updateOrderStatus(Long id, OrderStatus newStatus) {
@@ -140,7 +190,7 @@ public class OrderServiceImpl implements OrderService {
         Order order = orderRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Order", id));
 
-        // State machine kontrolü — Order.transitionTo() içinde
+        // State machine: Geçersiz geçişte exception fırlatır (örn: DELIVERED → PENDING)
         order.transitionTo(newStatus);
         Order updatedOrder = orderRepository.save(order);
 
@@ -148,19 +198,36 @@ public class OrderServiceImpl implements OrderService {
         return orderMapper.toResponse(updatedOrder);
     }
 
-    /** Sipariş iptal et */
+    /**
+     * Siparişi iptal eder.
+     *
+     * Neden iptal edilebilirlik kontrolü gerekli?
+     *   Kargo verilmiş (SHIPPED) veya teslim edilmiş (DELIVERED) siparişler iptal edilemez.
+     *   order.isCancellable(): PENDING/CONFIRMED/PROCESSING durumları için true.
+     *
+     * Stok geri verme:
+     *   Sipariş oluşturulurken stok rezerve edilmişti (product-service).
+     *   İptal edilince stok serbest bırakılmalı.
+     *   Kafka event: product-service bu eventi dinler, stoku artırır.
+     *   Neden senkron değil Kafka?
+     *     product-service geçici olarak düşebilir.
+     *     Kafka: Event kalıcı, product-service ayağa kalkınca işler.
+     *     Senkron: product-service düştüyse iptal de başarısız olur — kötü UX.
+     */
     @Override
     public OrderResponse cancelOrder(Long id, Long userId) {
         Order order = orderRepository.findByIdWithItems(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Order", id));
 
+        // Güvenlik: Kullanıcı yalnızca kendi siparişini iptal edebilir
         if (!order.getUserId().equals(userId)) {
             throw new BusinessException("Bu siparişi iptal etme yetkiniz yok", "FORBIDDEN");
         }
 
+        // Durum kontrolü: SHIPPED/DELIVERED → iptal edilemez
         if (!order.isCancellable()) {
             throw new BusinessException(
-                "Bu sipariş iptal edilemez: " + order.getStatus(),
+                "Bu sipariş iptal edilemez. Mevcut durum: " + order.getStatus(),
                 "ORDER_NOT_CANCELLABLE"
             );
         }
@@ -168,7 +235,7 @@ public class OrderServiceImpl implements OrderService {
         order.transitionTo(OrderStatus.CANCELLED);
         orderRepository.save(order);
 
-        // Kafka ile product-service'e stok geri verme sinyali gönder
+        // Kafka: product-service stoku geri verir (eventual consistency)
         eventPublisher.publishStockReleased(order, "Kullanıcı tarafından iptal edildi");
 
         return orderMapper.toResponse(order);
